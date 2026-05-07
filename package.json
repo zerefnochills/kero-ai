@@ -1,0 +1,30 @@
+{
+  "name": "kero",
+  "version": "1.0.0",
+  "description": "Kero — Personal AI Assistant. Futuristic desktop AI powered by OpenHorizon.",
+  "main": "electron/main.js",
+  "scripts": {
+    "backend": "node backend/server.js",
+    "frontend": "npx serve frontend -p 3000",
+    "start": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "electron": "concurrently \"npm run backend\" \"npm run frontend\" \"wait-on http://localhost:3000 && electron .\"",
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\" \"wait-on http://localhost:3000 && electron .\""
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^33.3.1",
+    "serve": "^14.2.4",
+    "wait-on": "^8.0.3"
+  },
+  "keywords": ["ai", "assistant", "electron", "kero", "openhorizon"],
+  "author": "",
+  "license": "MIT"
+}

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Kero — Your personal AI assistant powered by OpenHorizon. Futuristic JARVIS-inspired desktop experience." />
+  <title>KERO ◈ Personal AI Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- Animated background canvas -->
+  <canvas id="bgCanvas"></canvas>
+
+  <!-- Scan line effect -->
+  <div class="scanline"></div>
+
+  <!-- Custom Electron titlebar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-left">
+      <div class="titlebar-logo">K</div>
+      <span class="titlebar-text">KERO</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="tb-btn tb-close" id="tbClose" title="Close" aria-label="Close window">●</button>
+      <button class="tb-btn tb-min" id="tbMin" title="Minimize" aria-label="Minimize window">●</button>
+      <button class="tb-btn tb-max" id="tbMax" title="Maximize" aria-label="Maximize window">●</button>
+    </div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="app-shell" id="appShell">
+
+    <!-- ── LEFT SIDEBAR ── -->
+    <aside class="sidebar" id="sidebar">
+      <nav class="sidebar-nav">
+        <div class="nav-item active" data-mode="chat" onclick="navClick(this,'chat')" id="navChat" title="Chat mode">
+          <span class="nav-icon">◈</span> Chat
+        </div>
+        <div class="nav-item" data-mode="search" onclick="navClick(this,'search')" id="navSearch" title="Web search mode">
+          <span class="nav-icon">◉</span> Web Search
+        </div>
+        <div class="nav-item" data-mode="memory" onclick="navClick(this,'memory')" id="navMemory" title="View memory">
+          <span class="nav-icon">◎</span> Memory
+        </div>
+        <div class="nav-item disabled" data-mode="history" id="navHistory" title="History (coming soon)">
+          <span class="nav-icon">◷</span> History
+        </div>
+      </nav>
+
+      <div class="sidebar-stats">
+        <div class="stat-row">
+          <span class="stat-label">NEURAL CORE</span>
+          <span class="stat-value" id="statCpu">62%</span>
+        </div>
+        <div class="stat-bar"><div class="stat-fill" id="fillCpu" style="width:62%"></div></div>
+
+        <div class="stat-row">
+          <span class="stat-label">MEMORY</span>
+          <span class="stat-value" id="statMem">38%</span>
+        </div>
+        <div class="stat-bar"><div class="stat-fill" id="fillMem" style="width:38%"></div></div>
+
+        <div class="stat-row">
+          <span class="stat-label">CONTEXT</span>
+          <span class="stat-value" id="statCtx">0%</span>
+        </div>
+        <div class="stat-bar"><div class="stat-fill" id="fillCtx" style="width:0%"></div></div>
+      </div>
+
+      <div class="sidebar-status">
+        <div class="status-line">
+          <span class="status-dot" id="backendDot"></span>
+          <span class="status-text" id="backendText">CHECKING...</span>
+        </div>
+        <div class="status-url">localhost:4000</div>
+      </div>
+    </aside>
+
+    <!-- ── CENTER ── -->
+    <main class="center-col">
+
+      <!-- Header bar -->
+      <header class="header-bar" id="headerBar">
+        <div class="header-left">
+          <div class="header-logo-wrap">
+            <div class="header-logo" id="headerLogo">K</div>
+          </div>
+          <div class="header-titles">
+            <h1 class="header-name">KERO</h1>
+            <p class="header-sub">PERSONAL AI ASSISTANT</p>
+          </div>
+        </div>
+        <div class="header-pills">
+          <span class="pill pill-online" id="pillOnline"><span class="pill-dot dot-green"></span>ONLINE</span>
+          <span class="pill" id="pillBackend"><span class="pill-dot dot-dim"></span>BACKEND</span>
+          <span class="pill pill-model" id="pillModel">gemini-2.0-flash</span>
+          <span class="pill pill-count" id="pillCount">0 msgs</span>
+        </div>
+      </header>
+
+      <!-- Chat messages area -->
+      <div class="chat-area" id="chatArea">
+        <div class="welcome" id="welcomeScreen">
+          <div class="welcome-title">KERO</div>
+          <div class="welcome-sub">PERSONAL AI ASSISTANT</div>
+          <div class="welcome-hint">CLICK THE ORB OR TYPE TO BEGIN</div>
+        </div>
+      </div>
+
+      <!-- Token / context bar -->
+      <div class="context-bar" id="contextBar">
+        <span class="ctx-label">CONTEXT</span>
+        <div class="ctx-track"><div class="ctx-fill" id="ctxFill"></div></div>
+        <span class="ctx-count" id="ctxCount">0 / 128K tokens</span>
+      </div>
+
+      <!-- Input bar -->
+      <div class="input-bar" id="inputBar">
+        <button class="orb-btn" id="orbBtn" onclick="toggleVoice()" title="Voice input" aria-label="Toggle voice input">
+          <span class="orb-icon" id="orbIcon">🎤</span>
+        </button>
+        <div class="voice-waves" id="voiceWaves">
+          <span class="wave-bar"></span>
+          <span class="wave-bar"></span>
+          <span class="wave-bar"></span>
+          <span class="wave-bar"></span>
+          <span class="wave-bar"></span>
+        </div>
+        <input
+          type="text"
+          class="chat-input"
+          id="chatInput"
+          placeholder="Ask Kero anything..."
+          autocomplete="off"
+          aria-label="Message input"
+        />
+        <button class="send-btn" id="sendBtn" onclick="sendMsg()" title="Send message" aria-label="Send message">
+          SEND ▶
+        </button>
+      </div>
+    </main>
+
+    <!-- ── RIGHT PANEL ── -->
+    <aside class="right-panel" id="rightPanel">
+      <div class="rp-label">Quick Access</div>
+
+      <div class="action-card" onclick="quickAction('Search and summarize: latest AI developments today')" id="cardSearch" title="Web search">
+        <div class="ac-icon">🌐</div>
+        <div class="ac-name">WEB SEARCH</div>
+        <div class="ac-desc">Latest news & info</div>
+      </div>
+      <div class="action-card" onclick="quickAction('Give me a deep technical analysis of a topic I\'ll describe:')" id="cardAnalysis" title="Deep analysis">
+        <div class="ac-icon">🧠</div>
+        <div class="ac-name">ANALYSIS</div>
+        <div class="ac-desc">Deep reasoning</div>
+      </div>
+      <div class="action-card" onclick="quickAction('Write a well-commented Python function to:')" id="cardCode" title="Code generation">
+        <div class="ac-icon">💻</div>
+        <div class="ac-name">CODE</div>
+        <div class="ac-desc">Any language</div>
+      </div>
+      <div class="action-card" onclick="quickAction('Write a short creative piece about:')" id="cardCreative" title="Creative writing">
+        <div class="ac-icon">✍️</div>
+        <div class="ac-name">CREATIVE</div>
+        <div class="ac-desc">Writing & ideas</div>
+      </div>
+      <div class="action-card" onclick="quickAction('What are all the things you can help me with? Be specific.')" id="cardHelp" title="Help">
+        <div class="ac-icon">⚡</div>
+        <div class="ac-name">HELP</div>
+        <div class="ac-desc">See capabilities</div>
+      </div>
+
+      <button class="clear-btn" id="clearBtn" onclick="clearMem()" title="Clear conversation memory" aria-label="Clear memory">
+        ⊘ CLEAR MEMORY
+      </button>
+    </aside>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
