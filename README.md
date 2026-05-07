@@ -184,3 +184,5 @@ globalShortcut.register('Alt+K', () => { ... });
 ## 📜 License
 
 MIT — use freely, modify endlessly.
+
+# kero-ai
