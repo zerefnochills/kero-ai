@@ -1,6 +1,5 @@
 /* ═══════════════════════════════════════════
-   KERO — Backend Server
-   Express.js + Google Gemini API
+   KERO — Backend Server with Tool Calling
    ═══════════════════════════════════════════ */
 
 require('dotenv').config();
@@ -10,123 +9,191 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const fetch = require('node-fetch');
+const fs = require('fs').promises;
+const { exec } = require('child_process');
+const path = require('path');
 
 const app = express();
 
-/* ── Environment ── */
 const PORT = process.env.PORT || 4000;
-const API_KEY = process.env.GEMINI_API_KEY || '';
-const BASE_URL = process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai';
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const API_KEY = process.env.GEMINI_API_KEY || 'ollama';
+const BASE_URL = process.env.GEMINI_BASE_URL || 'http://localhost:11434/v1';
+const MODEL = process.env.GEMINI_MODEL || 'llama3';
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:3000';
 
-/* ── System Prompt ── */
 const SYSTEM_PROMPT = {
   role: 'system',
-  content:
-    `You are Kero — a highly intelligent, precise personal AI assistant. ` +
-    `You are sharp, slightly formal but warm, occasionally witty. ` +
-    `You give complete answers without padding or filler. ` +
-    `Address the user as 'sir' or 'ma'am' occasionally. ` +
-    `You are running locally on the user's machine via Google Gemini inference.`
+  content: `You are Kero, a highly capable local AI assistant. 
+You are running on the user's local machine and have tools to interact with their system.
+Use the 'open_application' tool to launch apps (e.g. 'notepad', 'calc', or paths).
+Use the 'list_directory' tool to see files in a folder.
+Use the 'read_file' tool to read file contents.
+Do not ask for permission to use tools, just use them when requested.`
 };
 
-/* ── Middleware ── */
+// Define Tools
+const tools = [
+  {
+    type: "function",
+    function: {
+      name: "open_application",
+      description: "Opens an application or file on the Windows machine. e.g. 'notepad', 'calc', 'explorer', or an absolute path.",
+      parameters: {
+        type: "object",
+        properties: {
+          app_name: {
+            type: "string",
+            description: "The name of the app to launch (e.g. 'calc', 'notepad')"
+          }
+        },
+        required: ["app_name"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_directory",
+      description: "Lists the contents of a directory on the local machine.",
+      parameters: {
+        type: "object",
+        properties: {
+          dir_path: {
+            type: "string",
+            description: "The absolute path of the directory to list, or '.' for the current project root."
+          }
+        },
+        required: ["dir_path"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_file",
+      description: "Reads the content of a local file.",
+      parameters: {
+        type: "object",
+        properties: {
+          file_path: {
+            type: "string",
+            description: "The absolute or relative path of the file to read."
+          }
+        },
+        required: ["file_path"]
+      }
+    }
+  }
+];
+
+// Tool Implementation Logic
+async function executeTool(toolCall) {
+  const funcName = toolCall.function.name;
+  const args = JSON.parse(toolCall.function.arguments);
+  
+  try {
+    if (funcName === 'open_application') {
+      return await new Promise((resolve) => {
+        // use 'start' on windows to open apps
+        exec(`start "" "${args.app_name}"`, (error) => {
+          if (error) resolve(`Failed to open application: ${error.message}`);
+          else resolve(`Successfully launched ${args.app_name}`);
+        });
+      });
+    } 
+    else if (funcName === 'list_directory') {
+      let p = args.dir_path === '.' ? process.cwd() : args.dir_path;
+      const files = await fs.readdir(p);
+      return `Contents of ${p}:\n` + files.join('\n');
+    }
+    else if (funcName === 'read_file') {
+      let p = path.resolve(process.cwd(), args.file_path);
+      const content = await fs.readFile(p, 'utf8');
+      return content.substring(0, 4000); // return up to 4000 chars to avoid blowing up context
+    }
+  } catch (error) {
+    return `Error executing ${funcName}: ${error.message}`;
+  }
+  return `Unknown tool: ${funcName}`;
+}
+
 app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
 app.use(cors({ origin: FRONTEND_ORIGIN }));
 app.use(express.json({ limit: '2mb' }));
 
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests. Please slow down.' }
-});
-app.use('/api/', limiter);
-
-/* ── Routes ── */
-
-// Health check
 app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    apiKeyLoaded: API_KEY.length > 0 && API_KEY !== 'your-gemini-api-key-here',
-    model: MODEL,
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'ok', model: MODEL });
 });
 
-// Chat completions
+// Chat completion with tool loop
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, useSearch } = req.body;
+    let { messages } = req.body;
+    if (!messages) return res.status(400).json({ error: 'messages missing' });
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'messages array is required and must not be empty.' });
-    }
+    // Always start with system prompt
+    let fullMessages = [SYSTEM_PROMPT, ...messages];
 
-    if (!API_KEY || API_KEY === 'your-gemini-api-key-here') {
-      return res.status(401).json({ error: 'API key is not configured on the server.' });
-    }
+    let finalReply = "";
+    
+    // Up to 3 iterations for tool calls
+    for (let i = 0; i < 3; i++) {
+      const response = await fetch(`${BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          messages: fullMessages,
+          tools: tools,
+          stream: false
+        })
+      });
 
-    // Build messages array with system prompt
-    const fullMessages = [SYSTEM_PROMPT, ...messages];
+      if (!response.ok) {
+        const errBody = await response.text();
+        console.error(`Upstream error:`, errBody);
+        return res.status(502).json({ error: 'Upstream AI service error.' });
+      }
 
-    // If search mode, prepend a hint to the last user message
-    if (useSearch) {
-      const last = fullMessages[fullMessages.length - 1];
-      if (last && last.role === 'user') {
-        last.content = `[Web search mode enabled] ${last.content}`;
+      const data = await response.json();
+      const choice = data.choices[0];
+      const message = choice.message;
+
+      // Append assistant's message (which might contain tool_calls)
+      fullMessages.push(message);
+
+      if (message.tool_calls && message.tool_calls.length > 0) {
+        // Execute all tool calls
+        for (const call of message.tool_calls) {
+          const resultContent = await executeTool(call);
+          
+          fullMessages.push({
+            role: "tool",
+            tool_call_id: call.id,
+            name: call.function.name,
+            content: resultContent
+          });
+        }
+        // Loop continues to let model process tool results
+      } else {
+        // No tool calls, we have the final response
+        finalReply = message.content;
+        break;
       }
     }
 
-    const response = await fetch(`${BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: fullMessages,
-        max_tokens: 1024,
-        temperature: 0.7,
-        stream: false
-      })
-    });
+    res.json({ reply: finalReply || "Task completed." });
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      console.error(`[Kero] Upstream error ${response.status}: ${errBody}`);
-
-      if (response.status === 401 || response.status === 403) {
-        return res.status(401).json({ error: 'Invalid or expired API key.' });
-      }
-      return res.status(502).json({ error: 'Upstream AI service returned an error. Please try again.' });
-    }
-
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content || 'I received an empty response. Please try again.';
-    const usage = data.usage || null;
-
-    res.json({ reply, usage });
   } catch (err) {
-    console.error('[Kero] Chat error:', err.message);
-    res.status(502).json({ error: 'Failed to reach the AI service. Check your connection and API configuration.' });
+    console.error('Chat error:', err.message);
+    res.status(502).json({ error: 'Failed to reach AI service.' });
   }
 });
 
-// Clear memory (stateless acknowledgment)
-app.post('/api/clear', (_req, res) => {
-  res.json({ cleared: true });
-});
-
-/* ── Start ── */
 app.listen(PORT, () => {
-  console.log(`\n  ╔══════════════════════════════════════╗`);
-  console.log(`  ║   KERO Backend — Port ${PORT}            ║`);
-  console.log(`  ║   Model: ${MODEL.padEnd(25)}  ║`);
-  console.log(`  ║   API Key: ${API_KEY ? '✓ Loaded' : '✗ Missing'}                  ║`);
-  console.log(`  ╚══════════════════════════════════════╝\n`);
+  console.log(`\n  KERO Backend (Ollama/Tool Calling) — Port ${PORT}`);
+  console.log(`  Model: ${MODEL} | Base URL: ${BASE_URL}\n`);
 });
